@@ -10,16 +10,18 @@ import scala.concurrent.duration._
 object CancellableObservableApp extends TaskApp {
   override def run(args: List[String]): Task[ExitCode] = {
     val cancelable = BooleanCancelable()
-    val observableTask =
-      KafkaConsumerObservable[Array[Byte], Array[Byte]](KafkaConsumerConfig.default.copy(groupId = "test-group"), List("test-topic"))
-        .takeWhileNotCanceled(cancelable)
-        .consumeWith(Consumer.foreach(println))
+    val observableTask = KafkaConsumerObservable
+      .apply[Array[Byte], Array[Byte]](KafkaConsumerConfig.default.copy(groupId = "consumer-group"), List("test-topic"))
+      .doAfterSubscribe(Task.eval(println("After subscribe")))
+      .bufferTimedWithPressure(1.second, 1)
+      .takeWhileNotCanceled(cancelable)
+      .consumeWith(Consumer.foreach(_ => ()))
 
-    val cancelableTask = Task.eval {
+    val cancelTask = Task.eval {
       cancelable.cancel()
-      println("canceled")
-    }.delayExecution(5.seconds)
+      println("Should stop now")
+    }.delayExecution(8.seconds).delayResult(8.seconds)
 
-    Task.gatherUnordered(List(cancelableTask, observableTask)).map(_ => ExitCode.Success)
+    Task.parZip2(cancelTask, observableTask).map(_ => ExitCode.Success)
   }
 }
